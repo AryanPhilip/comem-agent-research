@@ -45,13 +45,13 @@ class ChunkRunner:
         # Run the appropriate test runner for this chunk
         if self.args.evaluation_type == "mmina":
             test_runner = MMInATestRunner(self.args, agent_per_chunk)
-            result = test_runner.run(chunk)
+            summary = test_runner.run(chunk)
         elif self.args.evaluation_type in ["webvoyager", "expand_memory"]:
             test_runner = WebVoyagerTestRunner(self.args, agent_per_chunk)
-            result = test_runner.run(chunk)
+            summary = test_runner.run(chunk)
         elif self.args.evaluation_type == "mind2web":
             test_runner = Mind2WebTestRunner(self.args, agent_per_chunk)
-            result = test_runner.run(chunk)
+            summary = test_runner.run(chunk)
         else:
             raise ValueError(f"Unsupported evaluation type for chunking: {self.args.evaluation_type}")
         
@@ -60,7 +60,7 @@ class ChunkRunner:
             'status': 'completed',
             'chunk_idx': chunk_idx,
             'chunk_size': len(chunk),
-            'result': result
+            'summary': summary,
         }
     
     def get_test_files_for_domain(self, domain: str, logger) -> List[str]:
@@ -185,6 +185,7 @@ def main():
     logger.info(f"Domain: {domain}")
     logger.info(f"Observation context length: {args.max_obs_length}")
     logger.info(f"Use memory: {args.use_memory}")
+    logger.info(f"Memory mode: {args.memory_mode}")
     
     # Load grounding model using vLLM
     grounding_model = load_grounding_model_vllm(args)

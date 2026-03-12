@@ -48,10 +48,31 @@ def load_trajectories_direct(trajectory_path):
     import sys
     sys.path.insert(0, 'CoMEM-Agent-Inference')
     from data_preparation.prepare_training_data_onfly import load_trajectories_onfly
+    records = load_trajectories_onfly(trajectory_path, max_samples=None)
+    random.shuffle(records)
+    return records
+
+
+def _split_csv(value):
+    if not value:
+        return None
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
+def load_filtered_trajectories_direct(trajectory_path, data_args):
+    """Load trajectories lazily with explicit filters."""
+    import sys
+    sys.path.insert(0, 'CoMEM-Agent-Inference')
+    from data_preparation.prepare_training_data_onfly import load_trajectories_onfly
+
     records = load_trajectories_onfly(
-        trajectory_path,
+        trajectory_path=trajectory_path,
         max_samples=None,
-        filter_by_dataset=['mind2web_train', 'expand_memory']
+        filter_by_dataset=_split_csv(data_args.benchmark_filters),
+        filter_by_domain=_split_csv(data_args.domain_filters),
+        success_only=data_args.success_only,
+        min_horizon=data_args.min_horizon,
+        max_horizon=data_args.max_horizon,
     )
     random.shuffle(records)
     return records
@@ -130,8 +151,6 @@ def get_video_info(video_path, min_pixels, max_pixels, fps):
 
     return video_input[0], video_kwargs
 
-list_data_dict = load_trajectories_direct(trajectory_path='training_data')
-
 class SupervisedDataset(Dataset):
     """Dataset for supervised fine-tuning."""
 
@@ -147,7 +166,6 @@ class SupervisedDataset(Dataset):
         
         self.model_id = model_id
         self.processor = processor
-        self.list_data_dict = list_data_dict
         self.data_args = data_args
         self.padding = padding
         self.image_min_pixel = data_args.image_min_pixels
@@ -155,6 +173,11 @@ class SupervisedDataset(Dataset):
         self.video_min_pixel = data_args.video_min_pixels
         self.video_max_pixel = data_args.video_max_pixels
         self.fps = data_args.fps
+        if isinstance(data_path, list):
+            self.list_data_dict = data_path
+        else:
+            trajectory_path = data_path or "training_data"
+            self.list_data_dict = load_filtered_trajectories_direct(trajectory_path, data_args)
 
     def __len__(self):
         return len(self.list_data_dict)

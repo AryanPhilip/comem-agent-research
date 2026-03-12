@@ -1,6 +1,34 @@
 """Argument parser configuration for the GUI Agent"""
 import argparse
 
+MEMORY_MODES = ("none", "text", "continuous", "hybrid")
+MEMORY_REFRESH_POLICIES = ("task_start", "page_change", "verifier")
+
+
+def _normalize_memory_args(args: argparse.Namespace) -> argparse.Namespace:
+    """Normalize legacy flags into the new memory configuration surface."""
+    if args.memory_mode is None:
+        if args.use_continuous_memory and args.use_memory:
+            args.memory_mode = "hybrid"
+        elif args.use_continuous_memory:
+            args.memory_mode = "continuous"
+        elif args.use_memory:
+            args.memory_mode = "text"
+        else:
+            args.memory_mode = "none"
+
+    args.use_continuous_memory = args.memory_mode in {"continuous", "hybrid"}
+    args.use_text_memory = args.memory_mode in {"text", "hybrid"}
+    args.use_memory = args.memory_mode != "none"
+
+    if args.use_continuous_memory and args.memory_token_budget == 0:
+        args.memory_token_budget = 8
+
+    if args.use_continuous_memory and args.model not in {"agent-qformer", "ui-tars"}:
+        args.model = "agent-qformer"
+
+    return args
+
 def config() -> argparse.Namespace:
     """Configure and parse command line arguments"""
     parser = argparse.ArgumentParser(
@@ -73,12 +101,18 @@ def config() -> argparse.Namespace:
     parser.add_argument("--context_length", type=int, default=0)
     parser.add_argument("--max_tokens", type=int, default=500)
     parser.add_argument("--stop_token", type=str, default=None)
-    parser.add_argument("--use_memory", type=bool, default=False)
+    parser.add_argument("--use_memory", action="store_true", default=False)
     parser.add_argument("--use_history", type=bool, default=False)
-    parser.add_argument("--use_continuous_memory", type=bool, default=False)
+    parser.add_argument("--use_continuous_memory", action="store_true", default=False)
+    parser.add_argument("--memory_mode", choices=MEMORY_MODES, default=None)
+    parser.add_argument("--memory_refresh", choices=MEMORY_REFRESH_POLICIES, default="task_start")
+    parser.add_argument("--memory_token_budget", type=int, choices=[0, 4, 8, 16], default=8)
+    parser.add_argument("--enable_verifier", action="store_true", default=False)
+    parser.add_argument("--enable_reflection_memory", action="store_true", default=False)
     parser.add_argument("--faiss_index_path", type=str, default=None)
     parser.add_argument("--similar_num", type=int, default=10)
     parser.add_argument("--bank_size", type=int, default=None)
+    parser.add_argument("--checkpoint_path", type=str, default=None)
     parser.add_argument(
         "--max_obs_length",
         type=int,
@@ -124,15 +158,30 @@ def config() -> argparse.Namespace:
     # Manual Action Instruction
     parser.add_argument("--manual_action", action='store_true', default=False, 
                        help="Enable manual action instruction for complex task breakdown")
-    parser.add_argument("--debug", action='store_true', default=False, 
+    parser.add_argument("--debug", action='store_true', default=False,
                        help="Enable debug mode")
-    
+
+    # Session Reliability Layer (opt-in)
+    parser.add_argument("--enable_reliability", action='store_true', default=False,
+                        help="Enable Session Reliability Layer")
+    parser.add_argument("--action_retry_max", type=int, default=3,
+                        help="Max retries per action when reliability is enabled")
+    parser.add_argument("--action_retry_base_delay", type=float, default=0.5,
+                        help="Base delay (seconds) for exponential backoff")
+    parser.add_argument("--use_page_stability", action='store_true', default=False,
+                        help="Use DOM/network stability detection instead of fixed sleep")
+    parser.add_argument("--page_stability_timeout", type=int, default=5000,
+                        help="Max wait (ms) for page stability before fallback")
+    parser.add_argument("--session_degraded_threshold", type=int, default=2,
+                        help="Consecutive errors before session is DEGRADED")
+    parser.add_argument("--session_critical_threshold", type=int, default=4,
+                        help="Consecutive errors before session is CRITICAL")
+
     parser.add_argument("--datetime", type=str, default=None)
     
     args = parser.parse_args()
+    args = _normalize_memory_args(args)
     args.instruction_path = 'agent/prompts/jsons/p_cot_ground_actree_2s.json'
-    if args.use_continuous_memory:
-        args.model = 'agent-qformer'
     if args.datetime is None:
         datetime = 'test'
         args.datetime = datetime

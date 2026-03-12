@@ -5,14 +5,15 @@ from browser_env import Trajectory, ActionTypes, Action
 
 @beartype
 def early_stop(
-    trajectory: Trajectory, max_steps: int, thresholds: dict[str, int]
+    trajectory: Trajectory, max_steps: int, thresholds: dict[str, int],
+    session_monitor=None,
 ) -> tuple[bool, str]:
     """Check whether need to early stop"""
 
     last_k_actions: list[Action]
     action_seq: list[Action]
     action_seq = [item for item in trajectory if item.get('action_type', '')!='']
-    
+
     # reach the max step
     num_steps = len(action_seq)
     if num_steps >= max_steps:
@@ -33,4 +34,15 @@ def early_stop(
         ):
             return True, f"Failed to parse actions for {k} times"
 
-    return False, "" 
+    # Session health based stopping (opt-in via session_monitor)
+    if session_monitor is not None:
+        from .session_monitor import SessionHealth
+        if session_monitor.state.health == SessionHealth.FAILED:
+            err_msg = (
+                session_monitor.state.last_error.message
+                if session_monitor.state.last_error
+                else "unknown"
+            )
+            return True, f"Session failed: {err_msg}"
+
+    return False, ""

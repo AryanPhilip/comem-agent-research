@@ -21,6 +21,18 @@ from actions import (
     parse_action_json,
     # validate_action
 )
+from agent.controller import (
+    ReflectionBuffer,
+    StepVerifier,
+    TaskPlanner,
+    build_structured_page_state,
+)
+from memory.runtime import (
+    MemoryBundle,
+    NullMemoryInjector,
+    QwenContinuousMemoryInjector,
+    build_memory_runtime_payload,
+)
 from .llm_config import create_direct_model, load_tool_llm
 from tools.gui_tools import ClickTool, TypeTool, ScrollTool, WaitTool, StopTool, PressKeyTool, PageGotoTool, SelectionTool
 from tools.analysis_tools import MapSearchTool, ContentAnalyzerTool
@@ -69,6 +81,16 @@ class FunctionCallAgent:
     
         self.args = args
         self.logger = logging.getLogger("logger")
+        self.planner = TaskPlanner()
+        self.verifier = StepVerifier() if getattr(args, "enable_verifier", False) else None
+        self.reflection_buffer = ReflectionBuffer()
+        self.memory_bundle = MemoryBundle()
+        self.memory_refresh_url = None
+        self.memory_injector = (
+            QwenContinuousMemoryInjector()
+            if getattr(args, "use_continuous_memory", False)
+            else NullMemoryInjector()
+        )
         
         # Initialize function map for tools
         self.function_map = {}
@@ -205,8 +227,117 @@ class FunctionCallAgent:
                 self.function_map[name] = tool
             except Exception as e:
                 print(f"Failed to initialize tool {name}: {e}")
-    
-    def _get_system_message(self, intent, trajectory) -> str:
+
+    def _get_current_url(self, trajectory: Trajectory, meta_data: Dict[str, Any]) -> str:
+        if meta_data.get("page") is not None:
+            try:
+                return meta_data["page"].url
+            except Exception:
+                pass
+        if trajectory:
+            recent_obs = trajectory[-1]
+            if isinstance(recent_obs, dict):
+                if recent_obs.get("current_url"):
+                    return recent_obs["current_url"]
+                info = recent_obs.get("info", {})
+                page = info.get("page")
+                if page is not None:
+                    try:
+                        return page.url
+                    except Exception:
+                        pass
+        return ""
+
+    def _build_page_state(self, intent: str, trajectory: Trajectory, meta_data: Dict[str, Any]):
+        current_url = self._get_current_url(trajectory, meta_data)
+        current_subgoal = self.planner.plan(
+            intent=intent,
+            state=build_structured_page_state(
+                current_url=current_url,
+                action_history=meta_data.get("action_history", []),
+                current_subgoal=meta_data.get("current_subgoal", ""),
+                failure_state=meta_data.get("failure_state", ""),
+            ),
+            action_history=meta_data.get("action_history", []),
+        )
+        page_state = build_structured_page_state(
+            current_url=current_url,
+            action_history=meta_data.get("action_history", []),
+            current_subgoal=current_subgoal,
+            failure_state=meta_data.get("failure_state", ""),
+        )
+        meta_data["current_subgoal"] = current_subgoal
+        return page_state
+
+    def _run_verifier(self, intent: str, page_state, meta_data: Dict[str, Any]) -> None:
+        meta_data["needs_memory_refresh"] = False
+        meta_data["verifier_note"] = ""
+        if not self.verifier:
+            return
+
+        verification = self.verifier.verify(
+            intent=intent,
+            state=page_state,
+            action_history=meta_data.get("action_history", []),
+            response_history=meta_data.get("response_history", []),
+            site=meta_data.get("site", ""),
+        )
+        if verification.failure_state:
+            meta_data["failure_state"] = verification.failure_state
+        if verification.verifier_note:
+            meta_data["verifier_note"] = verification.verifier_note
+            meta_data["verifier_interventions"] = meta_data.get("verifier_interventions", 0) + 1
+        if verification.needs_refresh and self.args.memory_refresh == "verifier":
+            meta_data["needs_memory_refresh"] = True
+        if getattr(self.args, "enable_reflection_memory", False) and verification.reflection:
+            self.reflection_buffer.push(verification.reflection)
+
+    def _should_refresh_memory(self, page_state, meta_data: Dict[str, Any]) -> bool:
+        if self.memory is None or not self.args.use_memory:
+            return False
+        if self.memory_refresh_url is None:
+            return True
+        if not self.memory_bundle.selected_records and self.args.memory_refresh != "task_start":
+            return True
+        if self.args.memory_refresh == "task_start":
+            return False
+        if self.args.memory_refresh == "page_change":
+            return bool(page_state.current_url and page_state.current_url != self.memory_refresh_url)
+        if self.args.memory_refresh == "verifier":
+            return bool(meta_data.get("needs_memory_refresh"))
+        return False
+
+    def _refresh_memory_bundle(self, intent: str, trajectory: Trajectory, meta_data: Dict[str, Any], page_state) -> None:
+        if self.memory is None or not self.args.use_memory:
+            self.memory_bundle = MemoryBundle()
+            return
+        if not self._should_refresh_memory(page_state, meta_data):
+            return
+
+        current_image = self._get_current_screenshot(trajectory)
+        self.memory_bundle = self.memory.build_memory_bundle(
+            self.memory.build_query(
+                current_question=intent,
+                current_image=current_image,
+                dataset=self.args.evaluation_type,
+                domain=self.args.domain,
+                site=meta_data.get("site", ""),
+                action_history=meta_data.get("action_history", []),
+                failure_state=meta_data.get("failure_state", ""),
+                current_url=page_state.current_url,
+            ),
+            similar_num=self.args.similar_num,
+        )
+        self.experience_memory = self.memory_bundle.prompt_text
+        self.experience_texts = self.memory_bundle.experience_texts
+        self.experience_images = self.memory_bundle.experience_images
+        self.file_id_list = self.memory_bundle.file_id_list
+        self.memory_refresh_url = page_state.current_url
+        meta_data["memory_refreshes"] = meta_data.get("memory_refreshes", 0) + 1
+        if self.memory_bundle.selected_records:
+            meta_data["memory_hits"] = meta_data.get("memory_hits", 0) + 1
+
+    def _get_system_message(self, intent, trajectory, meta_data, page_state) -> str:
         """Get the system message for the agent using ReAct paradigm"""
         tools_section = ""
         lines = []
@@ -231,20 +362,21 @@ class FunctionCallAgent:
             
             lines.append(f"- **{name}**: {desc}{param_desc}")
         tools_section = "\n".join(lines)
-        if self.args.use_memory and self.memory is not None:
-            first_image = self._get_first_screenshot(trajectory)
-            if self.experience_memory is None:
-                print(f'constructing experience memory with similar_num: {self.args.similar_num}')
-                self.experience_memory, self.experience_texts, self.experience_images, self.file_id_list = self.memory.construct_experience_memory(intent, self, current_image=first_image, 
-                                                                                 dataset=self.args.evaluation_type, domain=self.args.domain, 
-                                                                                 similar_num=self.args.similar_num)
-        else:
-            with open(f"agent/prompts/examples.txt", 'r') as f:
-                self.experience_memory = f.read()
-                
+
+        reflection_note = self.reflection_buffer.top() if getattr(self.args, "enable_reflection_memory", False) else ""
+        with open("agent/prompts/examples.txt", "r") as f:
+            fallback_examples = f.read()
+        memory_payload = build_memory_runtime_payload(
+            memory_mode=self.args.memory_mode,
+            bundle=self.memory_bundle,
+            fallback_prompt_text=fallback_examples,
+            memory_token_budget=getattr(self.args, "memory_token_budget", 8),
+            reflection_note=reflection_note,
+        )
+
         with open(f"agent/prompts/system_prompt.txt", 'r') as f:
             system_prompt = f.read()
-        system_prompt = system_prompt.format(experience_memory=self.experience_memory, tools_section=tools_section)
+        system_prompt = system_prompt.format(experience_memory=memory_payload["prompt_text"], tools_section=tools_section)
         return system_prompt
 
     def next_action_custom(
@@ -259,14 +391,18 @@ class FunctionCallAgent:
         print('*'*50, 'current step: ', self.current_step, '*'*50)
         # Prepare messages for the LLM
         messages, meta_data = self._prepare_messages(trajectory, intent, meta_data)
-        
-        if self.args.use_continuous_memory and self.memory is not None:
-            responses, original_inputs, original_outputs = self.llm.chat(messages=messages, stream=False, 
-                                        experience_texts=self.experience_texts, experience_images=self.experience_images,
-                                        file_id_list=self.file_id_list)
-        else:
-            # Call the LLM with function calling
-            responses, original_inputs, original_outputs = self.llm.chat(messages=messages, stream=False)
+
+        llm_kwargs = build_memory_runtime_payload(
+            memory_mode=self.args.memory_mode,
+            bundle=self.memory_bundle,
+            fallback_prompt_text="",
+            memory_token_budget=getattr(self.args, "memory_token_budget", 8),
+        )["chat_kwargs"]
+        responses, original_inputs, original_outputs = self.llm.chat(
+            messages=messages,
+            stream=False,
+            **llm_kwargs,
+        )
         meta_data['original_inputs'] = original_inputs
         meta_data['original_outputs'] = original_outputs
         meta_data['original_responses'] = responses
@@ -307,16 +443,17 @@ class FunctionCallAgent:
     def _prepare_messages(self, trajectory: Trajectory, intent: str, meta_data: Dict[str, Any]) -> List[Dict]:
         """Prepare messages for the LLM with ReAct context"""
         messages = []
-        
-        # Add system message    
+
+        page_state = self._build_page_state(intent, trajectory, meta_data)
+        self._run_verifier(intent, page_state, meta_data)
+        page_state = self._build_page_state(intent, trajectory, meta_data)
+        self._refresh_memory_bundle(intent, trajectory, meta_data, page_state)
+
         messages.append({
             'role': 'system',
-            'content': self._get_system_message(intent, trajectory)
+            'content': self._get_system_message(intent, trajectory, meta_data, page_state)
         })
-        
-        # Add current intent with ReAct prompt
-        current_task = intent
-        
+
         # Add analysis results context if available
         if self.last_analysis_result:
             analysis_summary = self.last_analysis_result
@@ -390,9 +527,6 @@ class FunctionCallAgent:
             if isinstance(recent_obs, dict) and 'observation' in recent_obs:
                 obs = recent_obs['observation']
                 if 'image' in obs:
-                    # Generate a description of the current page using LLM
-                    page_description = self._generate_page_description(obs["image"])
-                    # Add the current screenshot with generated description
                     messages.append({
                         'role': 'user',
                         'content': [
@@ -402,7 +536,7 @@ class FunctionCallAgent:
                                     "url": f"data:image/png;base64,{obs['image']}"
                                 }
                             },
-                            {"type": "text", "text": page_description}
+                            {"type": "text", "text": page_state.to_prompt()}
                         ]
                     })
         # Add action history
@@ -425,9 +559,34 @@ class FunctionCallAgent:
                     'role': 'user',
                     'content': f"ACTION NUMBER LEFT: You have **{action_number_left} actions left**, You MUST finish the task within the remaining actions! If the left action number is 1, YOU MUST yield the STOP action and provide the answer!"
                 })
+
+        if meta_data.get("verifier_note"):
+            messages.append({
+                'role': 'user',
+                'content': f"**Verifier:** {meta_data['verifier_note']}"
+            })
+
+        reflection_note = self.reflection_buffer.top() if getattr(self.args, "enable_reflection_memory", False) else ""
+        if reflection_note:
+            messages.append({
+                'role': 'user',
+                'content': f"**Corrective reflection:** {reflection_note}"
+            })
+
+        # Inject session health warning when reliability layer detects issues
+        if hasattr(self, '_session_monitor') and self._session_monitor:
+            from utils.session_monitor import SessionHealth
+            if self._session_monitor.state.health != SessionHealth.HEALTHY:
+                error_context = self._session_monitor.get_error_context_for_agent()
+                messages.append({
+                    'role': 'user',
+                    'content': f"**Session Health Warning:** {error_context}\nAdjust your strategy accordingly."
+                })
+
         messages.append({
             'role': 'user',
-            'content': f"""**Current task:** {current_task}
+            'content': f"""**Current task:** {intent}
+**Current subgoal:** {page_state.current_subgoal}
 
 IMPORTANT REMINDERS:
 - Please specify the number label of the item you want to interact with, in the description of the action.
@@ -998,11 +1157,25 @@ REMEMBER: Output ONLY valid key-value pairs, nothing else."""
             self.logger.warning(f"Error generating page description: {e}")
             return "Current page state - analyze this and decide what to do next"
     
+    def set_session_monitor(self, monitor) -> None:
+        """Inject a SessionMonitor for reliability-aware prompting."""
+        self._session_monitor = monitor
+
     def reset(self, test_config_file: str) -> None:
         """Reset the agent for a new task"""
         self.logger.info(f"Resetting agent for config file: {test_config_file}")
-        # Clear any internal state if needed
-        pass
+        self.memory_bundle = MemoryBundle()
+        self.experience_memory = None
+        self.experience_texts, self.experience_images, self.file_id_list = None, None, None
+        self.memory_refresh_url = None
+        self.last_analysis_result = None
+        self.last_web_search_result = None
+        self.last_web_search_screenshots = None
+        self.last_page_goto_name = None
+        self.last_page_goto_result = None
+        self.last_map_search_query = None
+        self.last_map_search_result = None
+        self.reflection_buffer.reset()
 
 
 def construct_agent(args: argparse.Namespace) -> FunctionCallAgent:

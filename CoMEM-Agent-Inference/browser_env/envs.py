@@ -41,6 +41,7 @@ class ScriptBrowserEnv(Env[dict[str, Observation], Action]):
         save_trace_enabled: bool = False,
         sleep_after_execution: float = 0.0,
         args = None,  # Additional arguments for the environment
+        reliability_config: dict | None = None,
     ):
         self.headless = headless
         self.slow_mo = slow_mo
@@ -50,6 +51,11 @@ class ScriptBrowserEnv(Env[dict[str, Observation], Action]):
         self.sleep_after_execution = sleep_after_execution
         self.args = args
         self.tracing_started = False  # Track if tracing was started
+
+        # Session reliability layer (opt-in)
+        self._retry_config = reliability_config.get('retry_config') if reliability_config else None
+        self._use_page_stability = reliability_config.get('use_page_stability', False) if reliability_config else False
+        self._stability_timeout = reliability_config.get('stability_timeout', 5000) if reliability_config else 5000
 
         # Initialize observation processors for image and text observations
         self.image_processor = SimpleImageObservationProcessor(args)
@@ -263,14 +269,24 @@ class ScriptBrowserEnv(Env[dict[str, Observation], Action]):
 
         success = False
         fail_error = ""
+        action_error = None  # ClassifiedError or None
 
         # Execute pixel action (for grounding model-based actions)
-        self.page = execute_pixel_action(
-            action, self.page, self.image_processor, observation, self.args
+        result = execute_pixel_action(
+            action, self.page, self.image_processor, observation, self.args,
+            retry_config=self._retry_config,
         )
-            
+        # Unpack new tuple return format
+        if isinstance(result, tuple):
+            self.page, action_error = result
+        else:
+            self.page, action_error = result, None  # backward compat
+
         # Wait for page to load
-        if self.sleep_after_execution > 0:
+        if self._use_page_stability:
+            from .page_stability import wait_for_stable
+            wait_for_stable(self.page, timeout_ms=self._stability_timeout)
+        elif self.sleep_after_execution > 0:
             time.sleep(self.sleep_after_execution)
 
         # Clear interaction point after action execution
@@ -303,8 +319,9 @@ class ScriptBrowserEnv(Env[dict[str, Observation], Action]):
         info = {
             "page": DetachedPage(self.page.url, page_content),
             "fail_error": fail_error,
+            "action_error": action_error,  # None when reliability disabled
         }
-        
+
         # Get current URL
         current_url = self.page.url
 

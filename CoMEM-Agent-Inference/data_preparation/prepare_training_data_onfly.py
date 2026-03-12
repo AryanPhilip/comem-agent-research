@@ -28,7 +28,18 @@ ANALYZE_NUM = 0
 
 valid_file_nums_per_dataset = {}
 
-def process_single_file(file_path, dataset, domain, model, memory, all_samples, existing_memory=False):
+def process_single_file(
+    file_path,
+    dataset,
+    domain,
+    model,
+    memory,
+    all_samples,
+    existing_memory=False,
+    success_only=False,
+    min_horizon=None,
+    max_horizon=None,
+):
     global CLICK_NUM, TYPE_NUM, SCROLL_NUM, STOP_NUM, ANALYZE_NUM
 
     with open(file_path, 'r') as f:
@@ -41,10 +52,18 @@ def process_single_file(file_path, dataset, domain, model, memory, all_samples, 
         task_id = data['conversation_id']
         conversation_data = data['rounds']
         total_rounds = data['total_rounds']
-        max_rounds = 10
+        effective_min_horizon = 1 if min_horizon is None else min_horizon
+        effective_max_horizon = max_horizon
         if dataset != 'mind2web' and domain != 'conversation':
-            if total_rounds < 3 or total_rounds >= max_rounds:
-                return 0
+            effective_min_horizon = max(effective_min_horizon, 3)
+            if effective_max_horizon is None:
+                effective_max_horizon = 10
+        if total_rounds < effective_min_horizon:
+            return 0
+        if effective_max_horizon is not None and total_rounds > effective_max_horizon:
+            return 0
+        if success_only and not data.get('metadata', {}).get('success', True):
+            return 0
         final_answer = conversation_data[-1]['response']
         if any(phrase in final_answer for phrase in negative_phrases):
             print('Invalid Answer')
@@ -167,7 +186,16 @@ def process_single_file(file_path, dataset, domain, model, memory, all_samples, 
         return 1
     
     
-def load_trajectories_onfly(trajectory_path, max_samples=None, filter_by_dataset=None, existing_memory=False):
+def load_trajectories_onfly(
+    trajectory_path,
+    max_samples=None,
+    filter_by_dataset=None,
+    filter_by_domain=None,
+    existing_memory=False,
+    success_only=False,
+    min_horizon=None,
+    max_horizon=None,
+):
     # Parse command line arguments for memory configuration
     multimodal = True
     faiss_index_path = None
@@ -199,36 +227,66 @@ def load_trajectories_onfly(trajectory_path, max_samples=None, filter_by_dataset
         all_domains = [domain for domain in all_domains if os.path.isdir(f'{trajectory_path}/{dataset}/{domain}')]
 
         for domain in tqdm(all_domains):
+            if filter_by_domain is not None and domain not in filter_by_domain:
+                continue
             try:
-                all_tests = os.listdir(f'{trajectory_path}/{dataset}/{domain}/qwen2.5-vl-32b')
-                all_tests = [test for test in all_tests if os.path.isdir(f'{trajectory_path}/{dataset}/{domain}/qwen2.5-vl-32b/{test}')]
+                all_models = os.listdir(f'{trajectory_path}/{dataset}/{domain}')
+                all_models = [
+                    model for model in all_models
+                    if os.path.isdir(f'{trajectory_path}/{dataset}/{domain}/{model}')
+                ]
             except Exception as e:
                 print(f'Error listing tests for {dataset} {domain}: {e}')
                 continue
             seen_configs = set()
 
-            for test in tqdm(all_tests):
-                if 'test' not in test:
+            for model in tqdm(all_models):
+                model_root = f'{trajectory_path}/{dataset}/{domain}/{model}'
+                try:
+                    all_tests = os.listdir(model_root)
+                except Exception as e:
+                    print(f'Error listing tests for {dataset} {domain} {model}: {e}')
                     continue
-                if not os.path.exists(f'{trajectory_path}/{dataset}/{domain}/qwen2.5-vl-32b/{test}/success'):
-                    continue
-                success_files = os.listdir(f'{trajectory_path}/{dataset}/{domain}/qwen2.5-vl-32b/{test}/success')
-                all_files = [f'success/{file}' for file in success_files]  # + [f'positive/{file}' for file in positive_files]
-                all_files = [file for file in all_files if file.endswith('.jsonl')]
-                random.shuffle(all_files)
-                print('*'*50, f'{dataset} {domain} {test}', '*'*50)
-                for file in tqdm(all_files):
-                    if file in seen_configs:
+                all_tests = [test for test in all_tests if os.path.isdir(f'{model_root}/{test}')]
+
+                for test in tqdm(all_tests):
+                    if 'test' not in test:
                         continue
-                    file_path = f'{trajectory_path}/{dataset}/{domain}/qwen2.5-vl-32b/{test}/{file}'
-                    valid_file_num = process_single_file(file_path, dataset, domain, 'qwen2.5-vl-32b', memory, all_samples, existing_memory)
-                    valid_files += valid_file_num
-                    valid_file_nums_per_dataset[dataset] += valid_file_num
-                    seen_configs.add(file)
-                    if max_samples is not None and valid_files >= max_samples:
-                        print(f'Valid files: {valid_files}')
-                        print(f'valid_file_nums_per_dataset: {valid_file_nums_per_dataset}')
-                        return all_samples
+                    status_dirs = ['success'] if success_only else ['success', 'positive', 'negative']
+                    all_files = []
+                    for status in status_dirs:
+                        status_path = f'{model_root}/{test}/{status}'
+                        if not os.path.exists(status_path):
+                            continue
+                        status_files = os.listdir(status_path)
+                        all_files.extend(
+                            [f'{status}/{file}' for file in status_files if file.endswith('.jsonl')]
+                        )
+                    random.shuffle(all_files)
+                    print('*'*50, f'{dataset} {domain} {model} {test}', '*'*50)
+                    for file in tqdm(all_files):
+                        if file in seen_configs:
+                            continue
+                        file_path = f'{model_root}/{test}/{file}'
+                        valid_file_num = process_single_file(
+                            file_path,
+                            dataset,
+                            domain,
+                            model,
+                            memory,
+                            all_samples,
+                            existing_memory,
+                            success_only=success_only,
+                            min_horizon=min_horizon,
+                            max_horizon=max_horizon,
+                        )
+                        valid_files += valid_file_num
+                        valid_file_nums_per_dataset[dataset] += valid_file_num
+                        seen_configs.add(file)
+                        if max_samples is not None and valid_files >= max_samples:
+                            print(f'Valid files: {valid_files}')
+                            print(f'valid_file_nums_per_dataset: {valid_file_nums_per_dataset}')
+                            return all_samples
                     
     with open('training_data_detail.txt', 'w') as f:
         f.write(f'Valid files: {valid_files}\n')

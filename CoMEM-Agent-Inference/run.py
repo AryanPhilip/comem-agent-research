@@ -30,6 +30,7 @@ def main():
     prepare(args)
     logger.info(f"Observation context length: {args.max_obs_length}")
     logger.info(f"Use memory: {args.use_memory}")
+    logger.info(f"Memory mode: {args.memory_mode}")
     
     # Load model and agent
     # model, tokenizer = load_model(args)
@@ -76,19 +77,19 @@ def run_tests_mmina(args, agent, config_file_list):
     """Run the main test loop"""
     
     test_runner = MMInATestRunner(args, agent)
-    test_runner.run(config_file_list)
+    return test_runner.run(config_file_list)
 
 def run_tests_webvoyager(args, agent, config_file_list):
     """Run the main test loop"""
     
     test_runner = WebVoyagerTestRunner(args, agent)
-    test_runner.run(config_file_list)
+    return test_runner.run(config_file_list)
 
 def run_tests_mind2web(args, agent, config_file_list):
     """Run the main test loop"""
 
     test_runner = Mind2WebTestRunner(args, agent)
-    test_runner.run(config_file_list)
+    return test_runner.run(config_file_list)
 
 
 if __name__ == "__main__":

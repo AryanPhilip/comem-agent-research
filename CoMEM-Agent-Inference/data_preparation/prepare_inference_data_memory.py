@@ -13,6 +13,8 @@ from PIL import Image
 from io import BytesIO
 import torch
 
+from memory.continuous_processor import attach_experience_inputs
+
 negative_phrases = ['Early stop', 'cannot', 'not found', 'not available', "can't"]
 columns = {
     'messages': 'json',
@@ -38,50 +40,6 @@ compress_model = Qwen2_5_VLForConditionalGeneration_new.from_pretrained(
 )
 processor = AutoProcessor.from_pretrained("Qwen/Qwen2.5-VL-7B-Instruct", use_fast=True)
 
-def knowledge_processor_vlm(processor, inputs, texts=None, images=None):
-    """Process experience information for VLM"""
-    
-    # Default tokens for image processing
-    DEFAULT_IM_START_TOKEN = "<|im_start|>"
-    DEFAULT_IM_END_TOKEN = "<|im_end|>"
-    DEFAULT_IMAGE_TOKEN = "<|image_pad|>"
-    VISION_START_TOKEN = "<|vision_start|>"
-    VISION_END_TOKEN = "<|vision_end|>"
-    
-    all_experience_input_ids = [] 
-    all_experience_pixel_values = []
-    all_experience_image_grid_thw = []
-    for trajectory_actions, trajectory_images in zip(texts, images):
-        trajectory_text = ""
-        trajectory_image = []
-        for action, image_base64 in zip(trajectory_actions, trajectory_images):
-            if isinstance(image_base64, dict) and image_base64.get('url', '').startswith('data:image/png;base64,'):
-                image_bytes = base64.b64decode(image_base64.get('url', '').split(',')[1])
-            elif isinstance(image_base64, str) and image_base64.startswith('data:image/png;base64,'):
-                image_bytes = base64.b64decode(image_base64.split(',')[1])
-            else:
-                image_bytes = base64.b64decode(image_base64)
-            image = Image.open(BytesIO(image_bytes))
-            trajectory_image.append(image)
-            trajectory_text += f"{DEFAULT_IM_START_TOKEN}user\n{VISION_START_TOKEN}{DEFAULT_IMAGE_TOKEN}{VISION_END_TOKEN}{action}{DEFAULT_IM_END_TOKEN}\n"
-        if trajectory_image:
-            e_inputs = processor(text=[trajectory_text], images=trajectory_image, padding=False, return_tensors='pt')
-            e_input_ids = e_inputs['input_ids'].squeeze(0)
-            e_pixel_values = e_inputs['pixel_values']
-            e_image_grid_thw = e_inputs['image_grid_thw']
-            all_experience_pixel_values.append(e_pixel_values)
-            all_experience_image_grid_thw.append(e_image_grid_thw)
-        else:
-            e_input_ids = processor.tokenizer(trajectory_text, add_special_tokens=False, padding=False, return_tensors='pt')['input_ids'].squeeze(0)
-        
-        all_experience_input_ids.append(e_input_ids)
-        
-    inputs['experience_input_ids'] = all_experience_input_ids
-    inputs['experience_pixel_values'] = all_experience_pixel_values
-    inputs['experience_image_grid_thw'] = all_experience_image_grid_thw
-    
-    return inputs
-
 def process_vision_info(conversation):
     """Process vision information from conversation"""
     image_inputs = []
@@ -101,7 +59,7 @@ def get_knowledge_embeddings(processor, compress_model, image, prompt, experienc
     inputs = {}
     
     # Process experience information
-    inputs_with_experience = knowledge_processor_vlm(
+    inputs_with_experience = attach_experience_inputs(
         processor=processor,
         inputs=inputs,
         texts=experience_texts,

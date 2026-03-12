@@ -272,6 +272,7 @@ class Qwen2_5_VLForConditionalGeneration_new(Qwen2_5_VLForConditionalGeneration)
         experience_image_grid_thw: Optional[torch.LongTensor] = None,
         experience_cache_position: Optional[torch.LongTensor] = None,
         experience_past_key_values: Optional[List[torch.FloatTensor]] = None,
+        memory_token_budget: Optional[int] = None,
     # ) -> Union[Tuple, Qwen2_5_VLCausalLMOutputWithPast]:
     ):
         r"""
@@ -396,7 +397,8 @@ class Qwen2_5_VLForConditionalGeneration_new(Qwen2_5_VLForConditionalGeneration)
         if input_ids.shape[1] != 1:
             concatenated_embeddings, final_position_ids = self.get_compress_history_and_experience(inputs_embeds, position_ids,
                                 history_input_ids, history_inputs_embeds, history_attention_mask, history_position_ids, history_pixel_values, history_image_grid_thw, history_cache_position, history_past_key_values,
-                                experience_input_ids, experience_inputs_embeds, experience_attention_mask, experience_position_ids, experience_pixel_values, experience_image_grid_thw, experience_cache_position, experience_past_key_values)
+                                experience_input_ids, experience_inputs_embeds, experience_attention_mask, experience_position_ids, experience_pixel_values, experience_image_grid_thw, experience_cache_position, experience_past_key_values,
+                                memory_token_budget)
             self.shift_length = concatenated_embeddings.shape[1] - inputs_embeds.shape[1]
             print('shift_length', self.shift_length)
         else:
@@ -455,7 +457,8 @@ class Qwen2_5_VLForConditionalGeneration_new(Qwen2_5_VLForConditionalGeneration)
     def get_compress_history_and_experience(self, 
                                inputs_embeds, position_ids,
                                history_input_ids, history_inputs_embeds, history_attention_mask, history_position_ids, history_pixel_values, history_image_grid_thw, history_cache_position, history_past_key_values,
-                               experience_input_ids, experience_inputs_embeds, experience_attention_mask, experience_position_ids, experience_pixel_values, experience_image_grid_thw, experience_cache_position, experience_past_key_values):        
+                               experience_input_ids, experience_inputs_embeds, experience_attention_mask, experience_position_ids, experience_pixel_values, experience_image_grid_thw, experience_cache_position, experience_past_key_values,
+                               memory_token_budget=None):        
         
         # Initialize compressed embeddings list
         compressed_embeddings_list = []
@@ -488,6 +491,10 @@ class Qwen2_5_VLForConditionalGeneration_new(Qwen2_5_VLForConditionalGeneration)
         
         # Concatenate all compressed embeddings
         all_compressed_embeddings = torch.cat(compressed_embeddings_list, dim=1)
+        if memory_token_budget == 0:
+            return inputs_embeds, position_ids
+        if memory_token_budget is not None and memory_token_budget > 0:
+            all_compressed_embeddings = all_compressed_embeddings[:, :memory_token_budget, :]
         print(f"All compressed embeddings shape: {all_compressed_embeddings.shape}")
         
         concatenated_embeddings, final_position_ids = get_qformer_position_id(all_compressed_embeddings, inputs_embeds, position_ids)
@@ -638,6 +645,7 @@ class Qwen2_5_VLForConditionalGeneration_new(Qwen2_5_VLForConditionalGeneration)
         model_inputs["experience_position_ids"] = kwargs.get("experience_position_ids", None)
         model_inputs["experience_cache_position"] = kwargs.get("experience_cache_position", None)
         model_inputs["experience_past_key_values"] = kwargs.get("experience_past_key_values", None)
+        model_inputs["memory_token_budget"] = kwargs.get("memory_token_budget", None)
         
         # Qwen2-5-VL position_ids are prepareed with rope_deltas in forward
         model_inputs["position_ids"] = None

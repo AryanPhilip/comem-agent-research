@@ -1,0 +1,42 @@
+[project]
+name = "comem-agent"
+version = "0.1.0"
+description = "Auto-Scaling Continuous Memory For GUI Agent"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [
+    {name = "CoMEM-Agent Team"}
+]
+
+dependencies = [
+    "beartype",
+    "playwright",
+    "Pillow",
+    "pandas",
+    "gymnasium",
+    "matplotlib",
+    "dashscope",
+    "beautifulsoup4",
+    "torch==2.7.1",
+    "openai",
+    "transformers==4.49.0",
+    "flash-attn==2.3.3",
+    "qwen_vl_utils",
+    "qwen_agent",
+    "python-dotenv",
+    "faiss-cpu",
+    "evaluate",
+    "nltk",
+]
+
+[project.optional-dependencies]
+dev = []
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.uv]
+dev-dependencies = []
+

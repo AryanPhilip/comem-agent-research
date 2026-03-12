@@ -1,10 +1,10 @@
 """Utility modules for the GUI Agent"""
 from .early_stop import early_stop
 from .help_functions import (
-    prepare, 
-    set_global_variables, 
-    MMINA_DICT, 
-    is_domain_type, 
+    prepare,
+    set_global_variables,
+    MMINA_DICT,
+    is_domain_type,
     save_scores_to_json,
     dump_config,
     get_unfinished,
@@ -12,6 +12,9 @@ from .help_functions import (
     create_test_file_list_visualwebarena
 )
 from .logging_setup import setup_logging
+from .metrics_tracker import InferenceMetricsTracker
+from .error_classifier import classify_error, ClassifiedError, ErrorCategory
+from .session_monitor import SessionMonitor, SessionHealth
 
 __all__ = [
     'early_stop',
@@ -25,4 +28,10 @@ __all__ = [
     'create_test_file_list_mmina',
     'create_test_file_list_visualwebarena',
     'setup_logging',
+    'InferenceMetricsTracker',
+    'classify_error',
+    'ClassifiedError',
+    'ErrorCategory',
+    'SessionMonitor',
+    'SessionHealth',
 ] 

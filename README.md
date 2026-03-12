@@ -41,6 +41,33 @@ Our auto-scaling pipeline automatically grows the memory corpus:
 
 ### Installation
 
+#### Using uv (Recommended)
+
+[uv](https://github.com/astral-sh/uv) is a fast Python package installer written in Rust. Install it first:
+
+```bash
+# Install uv (if not already installed)
+curl -LsSf https://astral.sh/uv/install.sh | sh
+# Or using pip: pip install uv
+# Or using homebrew: brew install uv
+```
+
+Then set up the project:
+
+```bash
+# Create virtual environment and install dependencies
+uv venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+
+# Install dependencies
+uv pip install -e .
+
+# Install Playwright browsers
+playwright install
+```
+
+#### Using pip (Alternative)
+
 ```bash
 # Create environment
 conda create -n gui-agent python=3.10
@@ -52,6 +79,8 @@ pip install -r requirements.txt
 # Install Playwright browsers
 playwright install
 ```
+
+**Note:** For `flash-attn`, you may need CUDA toolkit and build tools installed. See [flash-attn installation guide](https://github.com/Dao-AILab/flash-attention) for details.
 
 ## 📊 Benchmarks
 
@@ -91,6 +120,8 @@ CoMEM-Agent-Inference/run_baseline.sh \
     --max_steps 15 \
     --use_memory 
 ```
+
+Every evaluation run now emits structured metrics summaries in the specified `--result_dir` (see `metrics_summary.json` and `metrics_summary.md`) so you can track success rates, average steps, and runtime at a glance.
 
 ### Available Options
 

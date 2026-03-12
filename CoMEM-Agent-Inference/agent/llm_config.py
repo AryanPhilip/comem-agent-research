@@ -10,6 +10,8 @@ from PIL import Image
 from io import BytesIO
 from openai.types.chat import ChatCompletionMessage
 
+from memory.continuous_processor import attach_experience_inputs
+
 class DirectVLLMModel:
     """Direct vLLM model wrapper that can be used without qwen_agent"""
     
@@ -53,6 +55,7 @@ class DirectTransformersModel:
         self.temperature = kwargs.get('temperature', 0.1)
         self.top_p = kwargs.get('top_p', 0.9)
         self.max_tokens = 10**4
+        self.memory_token_budget = kwargs.get('memory_token_budget', 8)
         self.checkpoint_path = kwargs.get('checkpoint_path', model_name)
         
         # Load processor and tokenizer
@@ -86,50 +89,6 @@ class DirectTransformersModel:
         
         return image_inputs
     
-    def knowledge_processor_vlm(self, processor, inputs, texts=None, images=None, tokenizer=None, formatted_prompt=None):
-        """Process experience information for VLM"""
-        # Default tokens for image processing
-        DEFAULT_IM_START_TOKEN = "<|im_start|>"
-        DEFAULT_IM_END_TOKEN = "<|im_end|>"
-        DEFAULT_IMAGE_TOKEN = "<|image_pad|>"
-        VISION_START_TOKEN = "<|vision_start|>"
-        VISION_END_TOKEN = "<|vision_end|>"
-        
-        all_experience_input_ids = [] 
-        all_experience_pixel_values = []
-        all_experience_image_grid_thw = []
-        for trajectory_actions, trajectory_images in zip(texts, images):
-            trajectory_text = ""
-            trajectory_image = []
-            for action, image_base64 in zip(trajectory_actions, trajectory_images):
-                if isinstance(image_base64, dict) and image_base64.get('url', '').startswith('data:image/png;base64,'):
-                    image_bytes = base64.b64decode(image_base64.get('url', '').split(',')[1])
-                elif isinstance(image_base64, str) and image_base64.startswith('data:image/png;base64,'):
-                    image_bytes = base64.b64decode(image_base64.split(',')[1])
-                else:
-                    image_bytes = base64.b64decode(image_base64)
-                image = Image.open(BytesIO(image_bytes))
-                trajectory_image.append(image)
-                trajectory_text += f"{DEFAULT_IM_START_TOKEN}user\n{VISION_START_TOKEN}{DEFAULT_IMAGE_TOKEN}{VISION_END_TOKEN}{action}{DEFAULT_IM_END_TOKEN}\n"
-            if trajectory_image:
-                e_inputs = processor(text=[trajectory_text], images=trajectory_image, padding=False, return_tensors='pt')
-                e_input_ids = e_inputs['input_ids'].squeeze(0)
-                e_pixel_values = e_inputs['pixel_values']
-                e_image_grid_thw = e_inputs['image_grid_thw']
-                all_experience_pixel_values.append(e_pixel_values)
-                all_experience_image_grid_thw.append(e_image_grid_thw)
-            else:
-                e_input_ids = processor.tokenizer(trajectory_text, add_special_tokens=False, padding=False, return_tensors='pt')['input_ids'].squeeze(0)
-            
-            all_experience_input_ids.append(e_input_ids)
-
-        
-        inputs['experience_input_ids'] = all_experience_input_ids
-        inputs['experience_pixel_values'] = all_experience_pixel_values
-        inputs['experience_image_grid_thw'] = all_experience_image_grid_thw
-        
-        return inputs
-    
     def generate_response_with_experience(self, image=None, prompt=None, experience_texts=None, experience_images=None, file_id_list=None, conversation=None, experience_embedding=None):
         """Generate response with experience texts and images"""
         
@@ -154,19 +113,16 @@ class DirectTransformersModel:
             images=image_inputs,
             return_tensors="pt",
         ).to("cuda")
-        file_id_list = None
         if file_id_list is not None:
             inputs['file_id_list'] = file_id_list
             inputs_with_experience = inputs
         else:
             # Process experience information
-            inputs_with_experience = self.knowledge_processor_vlm(
+            inputs_with_experience = attach_experience_inputs(
                 processor=self.processor,
                 inputs=inputs,
                 texts=experience_texts,
                 images=experience_images,
-                tokenizer=self.tokenizer,
-                formatted_prompt=formatted_prompt
             ).to("cuda")
         
         generated_ids = self.model.generate(
@@ -175,6 +131,7 @@ class DirectTransformersModel:
             use_cache=True, 
             temperature=self.temperature,
             top_p=self.top_p,
+            memory_token_budget=self.memory_token_budget,
         )
         
         print('generated_ids', generated_ids)
@@ -189,10 +146,12 @@ class DirectTransformersModel:
         return output_text
     
     def chat(self, messages: List[Dict], stream: bool = False, 
-             experience_texts=None, experience_images=None, file_id_list=None):
+             experience_texts=None, experience_images=None, file_id_list=None, memory_token_budget=None):
         """Chat with the model using transformers with experience support"""
         if stream:
             raise NotImplementedError("Streaming not yet implemented for transformers models")
+        if memory_token_budget is not None:
+            self.memory_token_budget = memory_token_budget
         # Check if experience data is provided
         has_experience = False
         if experience_texts is not None:
@@ -266,7 +225,7 @@ def create_direct_vllm_model(args: argparse.Namespace, model_name: str = None) -
 
     model_name_ = model_name_map.get(model_name, model_name)
     server_url = model_server_map[model_name]
-    api_key = args.getattr('open_router_api_key', 'EMPTY')
+    api_key = getattr(args, 'open_router_api_key', 'EMPTY') or "EMPTY"
     print('model_name', model_name_)
     print('server_url', server_url)
     print('api_key', api_key)
@@ -297,6 +256,7 @@ def create_direct_transformers_model(args: argparse.Namespace, model_name: str =
         checkpoint_path=args.checkpoint_path if hasattr(args, 'checkpoint_path') else model_name,
         temperature=0.1,
         top_p=0.001,
+        memory_token_budget=getattr(args, "memory_token_budget", 8),
     )
 
 
@@ -327,4 +287,3 @@ def load_tool_llm(args: argparse.Namespace, model_name='qwen2.5-vl') -> DirectVL
     """Load tool LLM"""
     tool_model = create_direct_vllm_model(args, model_name=model_name)
     return tool_model
-

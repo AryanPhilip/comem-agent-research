@@ -65,6 +65,21 @@ class DataArguments:
         default=None, metadata={"help": "Path to the training data."}
     )
     lazy_preprocess: bool = False
+    benchmark_filters: Optional[str] = field(
+        default=None, metadata={"help": "Comma-separated benchmark filters (for example: mind2web_train,expand_memory)."}
+    )
+    domain_filters: Optional[str] = field(
+        default=None, metadata={"help": "Comma-separated domain filters."}
+    )
+    success_only: bool = field(
+        default=False, metadata={"help": "Load only successful trajectories when set."}
+    )
+    min_horizon: Optional[int] = field(
+        default=None, metadata={"help": "Minimum number of rounds required for a training sample."}
+    )
+    max_horizon: Optional[int] = field(
+        default=None, metadata={"help": "Maximum number of rounds allowed for a training sample."}
+    )
     image_folder: Optional[str] = field(default=None)
     knowledge_image_folder: Optional[str] = field(default=None)
     image_min_pixels: Optional[int] = field(default=3136)

@@ -26,6 +26,8 @@ import io
 # Add the parent directory to the path to import modules
 sys.path.insert(0, 'GUI-Agent')
 
+_global_collector = None
+
 
 class TrainingDataCollector:
     def __init__(self, output_dir: str = "training_data", enabled: bool = True):
@@ -248,6 +250,18 @@ class TrainingDataCollector:
             return response.get('content', '')
         # String or any other type
         return response   
+
+    def _build_failure_tags(self, evaluation_result: Dict[str, Any]) -> List[str]:
+        evaluation = evaluation_result.get("evaluation", {})
+        tags = []
+        error_type = evaluation.get("Error_Type")
+        if error_type:
+            tags.append(str(error_type))
+        if evaluation.get("Redundant"):
+            tags.append("redundant_steps")
+        if evaluation.get("First_Error_Step"):
+            tags.append("first_error_step")
+        return tags
     
     def end_conversation(self, conversation_summary: Optional[Dict[str, Any]] = None, score: Optional[int] = None) -> str:
         """
@@ -280,6 +294,18 @@ class TrainingDataCollector:
         
         # Add evaluation to conversation data
         conversation_data["evaluation"] = evaluation_result
+        conversation_data["conversation_summary"] = conversation_summary or {}
+        conversation_data["metadata"] = {
+            "dataset": (conversation_summary or {}).get("evaluation_type", ""),
+            "domain": (conversation_summary or {}).get("domain", (conversation_summary or {}).get("sub_domain", "")),
+            "site": (conversation_summary or {}).get("site", ""),
+            "model": (conversation_summary or {}).get("model", ""),
+            "success": bool(score == 1 if score is not None else evaluation_result.get("evaluation", {}).get("Correctness", False)),
+            "step_count": len(self.conversation_history),
+            "timestamp": conversation_data["conversation_end"],
+            "failure_tags": self._build_failure_tags(evaluation_result),
+            "final_url": (conversation_summary or {}).get("final_url", ""),
+        }
         print(evaluation_result)
         
         # Determine where to save based on correctness
