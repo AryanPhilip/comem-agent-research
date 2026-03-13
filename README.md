@@ -1,276 +1,280 @@
-# Auto-Scaling Continuous Memory For GUI Agent
+# CoMEM-Agent Research
 
 <div align="center">
 
-[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
-[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![arXiv](https://img.shields.io/badge/arXiv-2510.09038-b31b1b.svg)](https://arxiv.org/abs/2510.09038)
-[![arXiv](https://img.shields.io/badge/Website-CoMEMAgent-c8b6ff.svg)](https://wenyiwu0111.github.io/CoMEM-Agent-project-page/)
-[![Dataset](https://img.shields.io/badge/🤗%20Dataset-GUI--Agent--Trajectories-yellow)](https://huggingface.co/datasets/WenyiWU0111/CoMEM-agent-memory-trajectories)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-2563eb.svg)](https://www.python.org/downloads/)
+[![License](https://img.shields.io/badge/license-MIT-16a34a.svg)](LICENSE)
+[![Paper](https://img.shields.io/badge/arXiv-2510.09038-b31b1b.svg)](https://arxiv.org/abs/2510.09038)
+[![Dataset](https://img.shields.io/badge/dataset-HuggingFace-f59e0b.svg)](https://huggingface.co/datasets/WenyiWU0111/CoMEM-agent-memory-trajectories)
+[![Project Page](https://img.shields.io/badge/project-page-0f172a.svg)](https://wenyiwu0111.github.io/CoMEM-Agent-project-page/)
+
 </div>
 
 <p align="center">
-  <img src="CoMEM-Agent-Inference/media/agent_comem_combined.drawio (1).png" alt="GUI-Agent Overview" width="100%">
+  <img src="CoMEM-Agent-Inference/media/agent_comem_combined.drawio (1).png" alt="CoMEM-Agent overview" width="100%">
 </p>
 
-This is the official code repository for the paper: [Auto-Scaling Continuous Memory For GUI Agent]().
-## 📖 Introduction
+CoMEM-Agent is a research codebase for **long-horizon GUI agents with scalable continuous memory**. The core idea is simple: instead of stuffing prior trajectories back into the model as long text summaries, compress each trajectory into a small fixed set of continuous embeddings and inject those directly into the VLM pipeline.
 
-We study how to endow GUI agents with **scalable continuous memory** that helps generalize across unfamiliar interfaces. Prior GUI agents compress past trajectories into text tokens, which balloons context length and misses decisive visual cues (*e.g.*, exact widget size and position). 
+That shift matters because GUI tasks are dominated by state, layout, and visual context. As trajectories get longer, text history becomes noisy and expensive. Continuous memory preserves more of the useful signal while keeping the prompt compact.
 
-We propose a **continuous memory** that encodes each GUI trajectory into a fixed-length sequence of continuous embeddings using the VLM itself as an encoder; these embeddings are plugged directly into the backbone's input layer, sharply reducing context cost while preserving fine-grained visual information. As memory size and retrieval depth increase, performance improves monotonically, unlike text memories that degrade with long prompts.
+## Why This Project Matters
 
-### Key Features
+- **Better memory representation**: previous GUI trajectories are encoded into **8 fixed continuous tokens** instead of long text blocks.
+- **Parameter-efficient training**: only about **1.2% of parameters** are tuned using **LoRA on a Q-Former**.
+- **Scalable data flywheel**: the pipeline discovers environments, synthesizes tasks, rolls out agents, and verifies outcomes automatically.
+- **Large training corpus**: roughly **188,451 trajectories** collected for about **$1,972**.
+- **Strong benchmark coverage**: evaluated across **MMInA**, **Mind2Web**, and **WebVoyager**.
 
-- 🎯 **Fixed-length Continuous Memory**: Encode GUI trajectories into compact embeddings (8 continuous tokens)
-- 🚀 **Efficient Fine-tuning**: Train only 1.2% of model parameters using LoRA on Q-Former
-- 📈 **Scalable Performance**: Monotonic improvement with more memory, unlike text-based approaches
-- 🔄 **Auto-scaling Data Flywheel**: Discover environments → Synthesize tasks → Roll out trajectories → Verify success
-- 💰 **Cost-effective**: Collect 188,451 trajectories for ~$1,972
-- 🏆 **SOTA Performance**: Qwen-2.5-VL-7B + continuous memory matches GPT-4o and Claude-4
+## What Is In This Repo
 
-### Data Flywheel
+This repo contains two coordinated stacks:
 
-Our auto-scaling pipeline automatically grows the memory corpus:
-1. **Discover**: Find new environments via search
-2. **Synthesize**: Generate tasks with open-source VLMs
-3. **Roll out**: Execute trajectories with the agent
-4. **Verify**: Validate success with the same VLM
+- `CoMEM-Agent-Inference/`
+  End-to-end evaluation, agent runtime, browser environment, retrieval, continuous-memory injection, and benchmark runners.
+- `CoMEM-Agent-train/`
+  Training code for the Q-Former memory encoder and the modified Qwen-based continuous-memory model.
 
-## 🚀 Quick Start
+This version also includes engineering improvements for experimentation:
 
-### Installation
+- explicit `memory_mode` support: `none`, `text`, `continuous`, `hybrid`
+- dynamic memory refresh policies
+- verifier and reflection hooks for long-horizon recovery
+- structured metrics summaries for runs
+- richer trajectory metadata for retrieval and ablations
+- lazy training-data loading with benchmark/domain/horizon filters
 
-#### Using uv (Recommended)
+## Core Idea
 
-[uv](https://github.com/astral-sh/uv) is a fast Python package installer written in Rust. Install it first:
+### Text memory breaks first
 
-```bash
-# Install uv (if not already installed)
-curl -LsSf https://astral.sh/uv/install.sh | sh
-# Or using pip: pip install uv
-# Or using homebrew: brew install uv
+For GUI agents, long textual histories tend to:
+
+- inflate context length
+- lose precise visual grounding
+- mix useful state with irrelevant narration
+- degrade as more retrieved examples are added
+
+### Continuous memory changes the tradeoff
+
+CoMEM compresses each retrieved trajectory into a fixed-size latent representation and prepends it to the model input. In practice, this gives a cleaner retrieval-and-control loop:
+
+1. retrieve similar trajectories
+2. compress them into continuous memory tokens
+3. inject them into the VLM
+4. execute the next step with better long-horizon state awareness
+
+## Repo Layout
+
+```text
+CoMEM-Agent/
+├── CoMEM-Agent-Inference/
+│   ├── agent/                   # ReAct agent, model wrappers, planner/verifier hooks
+│   ├── browser_env/             # Playwright-based browser environment
+│   ├── config/                  # CLI and runtime config
+│   ├── data_preparation/        # On-the-fly data and memory prep
+│   ├── memory/                  # Retrieval, indexing, condensation, continuous preprocessing
+│   ├── MMInA_evaluation/        # MMInA runner
+│   ├── Mind2Web_evaluation/     # Mind2Web runner
+│   ├── webvoyager_evaluation/   # WebVoyager runner
+│   ├── utils/                   # Metrics, reliability, data collection
+│   └── run.py                   # Main evaluation entrypoint
+├── CoMEM-Agent-train/
+│   └── src_agent/training/      # Q-Former / Qwen training stack
+├── tests/                       # Lightweight logic tests for memory/runtime wiring
+├── requirements.txt
+└── pyproject.toml
 ```
 
-Then set up the project:
+## Installation
+
+### Using `uv`
 
 ```bash
-# Create virtual environment and install dependencies
 uv venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-
-# Install dependencies
+source .venv/bin/activate
 uv pip install -e .
-
-# Install Playwright browsers
 playwright install
 ```
 
-#### Using pip (Alternative)
+### Using `pip` / conda
 
 ```bash
-# Create environment
 conda create -n gui-agent python=3.10
 conda activate gui-agent
-
-# Install dependencies
 pip install -r requirements.txt
-
-# Install Playwright browsers
 playwright install
 ```
 
-**Note:** For `flash-attn`, you may need CUDA toolkit and build tools installed. See [flash-attn installation guide](https://github.com/Dao-AILab/flash-attention) for details.
+Notes:
 
-## 📊 Benchmarks
+- `flash-attn` may require a compatible CUDA toolchain.
+- local open-source inference expects running model servers for supported VLMs.
+- Playwright browsers must be installed before evaluation.
 
-We evaluate on multiple real-world GUI benchmarks:
+## Quick Start
 
-### MMInA
-
-- **Shopping** (200 tasks): E-commerce interactions
-- **Wikipedia** (308 tasks): Information seeking
-
-### Mind2Web
-
-Cross-website task execution with:
-- `test_website`: General websites
-- `test_domain_Info`: Information domains
-- `test_domain_Service`: Service domains
-
-### WebVoyager
-
-Multi-domain web navigation across 15+ domains including:
-- E-commerce (Amazon, Apple)
-- Information (ArXiv, Wikipedia, BBC News)
-- Services (Booking, GitHub, Google Maps)
-- And more...
-
-## 🎮 Running Experiments
-
-### Command Line Interface
-
-Use the main script with flexible options:
+### 1. Baseline run
 
 ```bash
-CoMEM-Agent-Inference/run_baseline.sh \
-    --eval_type mmina \
-    --domain shopping \
-    --model qwen2.5-vl \
-    --max_steps 15 \
-    --use_memory 
+python CoMEM-Agent-Inference/run.py \
+  --evaluation_type mmina \
+  --domain shopping \
+  --model qwen2.5-vl \
+  --memory_mode none
 ```
 
-Every evaluation run now emits structured metrics summaries in the specified `--result_dir` (see `metrics_summary.json` and `metrics_summary.md`) so you can track success rates, average steps, and runtime at a glance.
-
-### Available Options
+### 2. Text memory
 
 ```bash
-Options:
-  --eval_type TYPE          Benchmark for Evaluation (mmina, mind2web, webvoyager)
-  --domain DOMAIN           Domain for evaluation
-  --model MODEL             Model to use
-  --max_steps N             Maximum steps per task (default: 15)
-  --result_dir DIR          Results directory (default: results)
-  --use_memory              Enable memory
-  --use_continuous_memory   Enable continuous memory
-  --checkpoint_path         Used only when use_continuous_memory is True
-  --collect_training_data   Collect trajectory data for memory
-  --help, -h                Show help message
+python CoMEM-Agent-Inference/run.py \
+  --evaluation_type mmina \
+  --domain shopping \
+  --model qwen2.5-vl \
+  --memory_mode text
 ```
 
-### Example Scripts
-
-We provide ready-to-use example scripts in the `CoMEM-Agent-Inference/examples/` directory:
-
-#### Baseline Evaluation
+### 3. Continuous memory
 
 ```bash
-# MMInA Shopping with Qwen2.5-VL
-CoMEM-Agent-Inference/examples/run_mmina_shopping.sh
-
-# MMInA Wikipedia
-CoMEM-Agent-Inference/examples/run_mmina_wikipedia.sh
-
-# Mind2Web Evaluation
-CoMEM-Agent-Inference/examples/run_mind2web.sh
-
-# WebVoyager Evaluation
-CoMEM-Agent-Inference/examples/run_webvoyager.sh
+python CoMEM-Agent-Inference/run.py \
+  --evaluation_type mmina \
+  --domain shopping \
+  --memory_mode continuous \
+  --memory_token_budget 8
 ```
 
-#### With Memory
+### 4. Hybrid memory with verifier-backed recovery
 
 ```bash
-# Text-based memory
-CoMEM-Agent-Inference/examples/run_with_text_memory.sh
-
-# Continuous memory (CoMEM)
-CoMEM-Agent-Inference/examples/run_with_continuous_memory.sh
+python CoMEM-Agent-Inference/run.py \
+  --evaluation_type mmina \
+  --domain shopping \
+  --memory_mode hybrid \
+  --memory_refresh verifier \
+  --enable_verifier \
+  --enable_reflection_memory
 ```
 
-See [`CoMEM-Agent-Inference/examples/README.md`](CoMEM-Agent-Inference/examples/README.md) for detailed documentation and more examples.
+Every run writes structured outputs under `results/...`, including:
 
-## 📦 Dataset
+- `metrics_summary.json`
+- `metrics_summary.md`
 
-We release our auto-collected trajectory dataset on HuggingFace:
+Those summaries now track:
 
-**[GUI-Agent-Trajectories](https://huggingface.co/datasets/WenyiWU0111/CoMEM-agent-memory-trajectories)**
+- task success rate
+- average steps and duration
+- repeated-action rate
+- verifier intervention rate
+- retrieval hit rate
+- performance by horizon bucket
 
-This dataset contains **188,451** GUI interaction trajectories collected through our auto-scaling data flywheel across diverse websites and tasks:
+## Benchmarks
 
-- **Multi-domain Coverage**: E-commerce, information seeking, booking, social media, and more
-- **Rich Annotations**: Task descriptions, Website url, Screenshots, model responses, and actions at each step
-- **Cost-effective**: Collected **188,451** trajectories for **$1,972** using our automated pipeline
-- **Self-synthesized**: Tasks generated by open-source VLMs, verified automatically
+| Benchmark | Scope | Example domains |
+|---|---|---|
+| `mmina` | multimodal multi-hop web tasks | `shopping`, `wikipedia` |
+| `mind2web` | cross-site web navigation | `test_website`, `test_domain_Info`, `test_domain_Service` |
+| `webvoyager` | broader multi-domain web tasks | `Amazon`, `ArXiv`, `Booking`, `GitHub`, `Google_Map`, more |
 
-## 🤗 Pre-trained Checkpoints
+## Memory and Control Features
 
-We release our continuous memory checkpoints on HuggingFace:
+The current runtime supports a more research-friendly control loop than a plain retrieved-example baseline.
 
-| Model | Base VLM | HuggingFace Link |
-|-------|----------|------------------|
-| **Qwen2.5-VL + CoMEM** | Qwen2.5-VL-7B-Instruct |  [WenyiWU0111/lora_qformer_test_V4-700_merged](https://huggingface.co/WenyiWU0111/lora_qformer_test_V4-700_merged) |
-| **UI-TARS + CoMEM** | UI-TARS-V1.5-7B |  [WenyiWU0111/lora_qformer_uitars_test_V1-400_merged](https://huggingface.co/WenyiWU0111/lora_qformer_uitars_test_V1-400_merged) |
+### Memory modes
 
+- `none`
+  No retrieved memory.
+- `text`
+  Retrieved trajectories are injected as textual exemplars.
+- `continuous`
+  Retrieved trajectories are encoded and passed as continuous memory.
+- `hybrid`
+  Uses both textual memory and continuous memory together.
 
-## 🔧 Supported Models
+### Memory refresh policies
 
-### Open-Source VLMs
+- `task_start`
+  Retrieve once per task.
+- `page_change`
+  Refresh retrieval when the page state changes.
+- `verifier`
+  Refresh retrieval when the verifier detects drift or failure patterns.
 
-- **Qwen2.5-VL-7B** / **Qwen2.5-VL-32B**: SOTA vision-language models
-- **Qwen2-VL-7B**: Previous generation Qwen VL
-- **UI-TARS-V1.5-7B**: Specialized for GUI understanding
-- **CogAgent-9B**: Multi-modal agent model
-- **WebSight-7B**: Web-specific VLM
+### Verifier and reflection hooks
 
-### Commercial APIs
+The runtime includes lightweight planning and recovery support for long-horizon tasks:
 
-- **GPT-4o**: OpenAI's multimodal model
-- **Claude-3.5-Sonnet / Claude-4**: Anthropic's model
-- **Gemini-2.5-Pro**: Google's latest model
+- planner-generated subgoals
+- verifier checks for loops, missing elements, and wrong-page drift
+- reflection memory to inject the most relevant corrective guidance
 
-### Adding New Models
+## Training Continuous Memory
 
-To add a new model, edit `CoMEM-Agent-Inference/agent/llm_config.py`:
+The training stack lives in `CoMEM-Agent-train/` and is centered on a Q-Former-based compressor for GUI trajectories.
 
-```python
-# In create_direct_vllm_model function
-model_name_map = {
-    'your-model': 'HuggingFace/model-name',
-    ...
-}
+Key details:
 
-model_server_map = {
-    'your-model': 'http://localhost:PORT/v1',
-    ...
-}
-```
+- base VLM remains frozen
+- LoRA is applied to the Q-Former path
+- training data can be loaded lazily with benchmark/domain/success/horizon filters
+- continuous-memory token budget is configurable for ablations
 
-## 📂 CoMEM-Agent-Inference Structure
+## Dataset and Checkpoints
 
-```
-GUI-Agent/
-├── actions/              # Action creation and parsing
-├── agent/                # Core agent implementation with ReAct
-├── browser_env/          # Playwright-based browser environment
-├── config/               # Configuration and argument parsing
-├── data_preparation/     # Data preparation scripts
-├── examples/             # Example scripts for running experiments
-├── memory/               # Experience memory system (FAISS indexing)
-├── memory_evolution/     # Data flywheel for memory expansion
-├── Mind2Web_evaluation/  # Mind2Web benchmark evaluation
-├── MMInA_evaluation/     # MMInA benchmark evaluation
-├── mmina/                # MMInA dataset
-├── tools/                # Function calling tools (GUI, search, analysis)
-├── utils/                # Shared utilities and helpers
-├── webvoyager_evaluation/# WebVoyager benchmark evaluation
-├── run_baseline.sh       # Main evaluation script
-└── run.py                # Python entry point
-```
+### Dataset
 
-Each directory contains a detailed `README.md` with component documentation.
+Hugging Face dataset:
 
-## 🎓 Training Continuous Memory
+- [WenyiWU0111/CoMEM-agent-memory-trajectories](https://huggingface.co/datasets/WenyiWU0111/CoMEM-agent-memory-trajectories)
 
-For training your own continuous memory models, please refer to [this folder]((CoMEM-Agent-train)) and our training repository:
+### Pretrained checkpoints
 
-**[CoMEM Training Repository](https://github.com/WenyiWU0111/CoMEM)**
+| Model | Base VLM | Checkpoint |
+|---|---|---|
+| Qwen2.5-VL + CoMEM | Qwen2.5-VL-7B-Instruct | [WenyiWU0111/lora_qformer_test_V4-700_merged](https://huggingface.co/WenyiWU0111/lora_qformer_test_V4-700_merged) |
+| UI-TARS + CoMEM | UI-TARS-V1.5-7B | [WenyiWU0111/lora_qformer_uitars_test_V1-400_merged](https://huggingface.co/WenyiWU0111/lora_qformer_uitars_test_V1-400_merged) |
 
-The repository includes:
-- Training scripts for Q-Former memory encoder
-- Data synthesis pipeline
-- Memory retrieval and indexing
-- Evaluation protocols
+## Supported Models
 
-Key training details:
-- **Parameters**: Only 1.2% of the model (LoRA on Q-Former)
-- **Memory Size**: 8 continuous embeddings per trajectory
-- **Base Model**: Frozen during training and inference
+Open-source VLMs:
 
-## 📝 Citation
+- Qwen2.5-VL-7B
+- Qwen2.5-VL-32B
+- Qwen2-VL-7B
+- UI-TARS-V1.5-7B
+- CogAgent-9B
+- WebSight-7B
 
-If you find this work useful, please cite our paper:
+Commercial APIs:
+
+- GPT-4o
+- Claude-family models
+- Gemini-family models
+
+To add a new model, update the model registry in `CoMEM-Agent-Inference/agent/llm_config.py`.
+
+## Project Positioning
+
+This repo is best read as a **research engineering project** at the intersection of:
+
+- multimodal agents
+- retrieval and memory systems
+- long-horizon control
+- GUI/web automation
+- parameter-efficient adaptation
+
+If you are evaluating this project as portfolio work, the strongest technical pieces are:
+
+- continuous memory injection into the VLM stack
+- large-scale trajectory collection and verification pipeline
+- benchmark-driven evaluation across multiple GUI-agent tasks
+- engineering extensions for hybrid memory, verifier-backed recovery, and structured metrics
+
+## Citation
+
+If this work is useful in your research, cite the original paper:
 
 ```bibtex
 @article{wu2025comemagent,
@@ -281,8 +285,10 @@ If you find this work useful, please cite our paper:
 }
 ```
 
-## 📧 Contact
+## Acknowledgment
 
-For questions or collaboration opportunities, please reach out through Email: wew058@ucsd.edu
+This repo builds on the ideas and artifacts from the CoMEM-Agent paper and associated public project resources. The citation above should be used for the original research contribution.
 
----
+## License
+
+MIT
