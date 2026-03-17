@@ -4,9 +4,7 @@
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-2563eb.svg)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/license-MIT-16a34a.svg)](LICENSE)
-[![Paper](https://img.shields.io/badge/arXiv-2510.09038-b31b1b.svg)](https://arxiv.org/abs/2510.09038)
 [![Dataset](https://img.shields.io/badge/dataset-HuggingFace-f59e0b.svg)](https://huggingface.co/datasets/WenyiWU0111/CoMEM-agent-memory-trajectories)
-[![Project Page](https://img.shields.io/badge/project-page-0f172a.svg)](https://wenyiwu0111.github.io/CoMEM-Agent-project-page/)
 
 </div>
 
@@ -272,22 +270,6 @@ If you are evaluating this project as portfolio work, the strongest technical pi
 - benchmark-driven evaluation across multiple GUI-agent tasks
 - engineering extensions for hybrid memory, verifier-backed recovery, and structured metrics
 
-## Citation
-
-If this work is useful in your research, cite the original paper:
-
-```bibtex
-@article{wu2025comemagent,
-  title={Auto-Scaling Continuous Memory For GUI Agent},
-  author={Wenyi Wu, Kun Zhou, Ruoxin Yuan, Vivian Yu, Stephen Wang, Zhiting Hu, Biwei Huang},
-  journal={arXiv preprint arXiv:2510.09038},
-  year={2025}
-}
-```
-
-## Acknowledgment
-
-This repo builds on the ideas and artifacts from the CoMEM-Agent paper and associated public project resources. The citation above should be used for the original research contribution.
 
 ## License
 
